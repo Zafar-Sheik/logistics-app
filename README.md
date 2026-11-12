@@ -25,7 +25,8 @@ Mobile-first, so the whole business can be run from a phone.
 ```bash
 npm install
 cp .env.example .env      # then fill in DATABASE_URL and AUTH_SECRET
-npm run db:deploy         # creates the tables in your TiDB database
+npm run db:deploy         # creates the tables (or run database/create-database.sql in TiDB)
+npm run db:check          # confirms the app can reach the database
 npm run dev
 ```
 
@@ -39,6 +40,7 @@ Open http://localhost:3000. The first visit shows a one-time setup screen where 
 | `npm run build` | Generate the Prisma client and build for production |
 | `npm start` | Run the production build |
 | `npm run db:deploy` | Apply database migrations (safe to run repeatedly) |
+| `npm run db:check` | Test the database connection and explain any problem |
 | `npm run lint` / `npm run typecheck` | Code checks |
 
 ## Project layout

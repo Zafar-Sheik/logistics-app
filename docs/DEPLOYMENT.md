@@ -43,6 +43,14 @@ If you use the script, skip `npm run db:deploy`. Instead run this once, so futur
 npx prisma migrate resolve --applied 20261112000000_init
 ```
 
+### Check the connection
+
+```bash
+npm run db:check
+```
+
+This connects with the `DATABASE_URL` in `.env`, confirms all ten tables exist, and if anything is wrong it shows the real error and what to do about it (wrong password, missing `prefix.` in the TiDB Serverless username, unknown database, blocked port 4000, TLS problems).
+
 ## 3. Deploy
 
 ### Vercel (recommended)
@@ -84,6 +92,19 @@ Open the site on the phone, then:
 ## Backups
 
 Your data lives in TiDB. TiDB Cloud takes automatic backups; check the retention period for your tier under Cluster → Backup. You can also export every list to CSV from Reports → Export your data.
+
+## Troubleshooting
+
+**`pool failed to retrieve a connection from pool (pool connections: active=0 idle=0 limit=5)`**
+The app could not open any connection to TiDB. Run `npm run db:check` to see the underlying reason. Common causes:
+
+- Username missing its prefix. TiDB Cloud Serverless usernames look like `4abcXYZ.root`.
+- Special characters in the password not URL-encoded.
+- The database name at the end of the URL does not exist.
+- Port 4000 blocked by an office, school or mobile network, or a VPN.
+- Your IP not allowed in the cluster's Networking settings (dedicated clusters).
+
+Connections time out after 20 seconds and the pool waits up to 30 seconds. To change these, add `connect_timeout` or `pool_timeout` (in seconds) to the URL, e.g. `...?sslaccept=strict&connect_timeout=30`.
 
 ## Technical notes
 
