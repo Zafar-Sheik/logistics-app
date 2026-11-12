@@ -1,0 +1,327 @@
+// Haulbook data model — TiDB (MySQL-compatible).
+// relationMode = "prisma" keeps referential integrity in the application layer,
+// which works on every TiDB tier, so each relation field carries its own index.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider     = "mysql"
+  relationMode = "prisma"
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+enum ContactKind {
+  CUSTOMER
+  SUBCONTRACTOR
+}
+
+enum LoadStatus {
+  PLANNED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum DocKind {
+  INVOICE
+  QUOTE
+}
+
+enum DocStatus {
+  DRAFT
+  SENT
+  PAID
+  VOID
+  ACCEPTED
+  DECLINED
+}
+
+enum BillStatus {
+  OPEN
+  PAID
+  VOID
+}
+
+enum PaymentDirection {
+  IN
+  OUT
+}
+
+enum PaymentMethod {
+  EFT
+  CASH
+  CARD
+  CHEQUE
+  OTHER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String   @db.VarChar(120)
+  email        String   @unique @db.VarChar(190)
+  passwordHash String   @db.VarChar(100)
+  role         Role     @default(STAFF)
+  active       Boolean  @default(true)
+  tutorialDone Boolean  @default(false)
+  failedLogins Int      @default(0)
+  lockedUntil  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// Single-row table (id is always 1) holding company profile, branding,
+/// banking details and document numbering.
+model Company {
+  id            Int     @id @default(1)
+  name          String  @db.VarChar(160)
+  tradingName   String? @db.VarChar(160)
+  regNumber     String? @db.VarChar(60)
+  vatNumber     String? @db.VarChar(60)
+  email         String? @db.VarChar(190)
+  phone         String? @db.VarChar(40)
+  website       String? @db.VarChar(190)
+  addressLine1  String? @db.VarChar(190)
+  addressLine2  String? @db.VarChar(190)
+  city          String? @db.VarChar(100)
+  province      String? @db.VarChar(100)
+  postalCode    String? @db.VarChar(20)
+  country       String? @db.VarChar(100)
+  /// PNG/JPEG data URL, resized in the browser before upload.
+  logo          String? @db.MediumText
+  accentColor   String  @default("#0f766e") @db.VarChar(9)
+
+  bankName          String? @db.VarChar(120)
+  bankAccountName   String? @db.VarChar(160)
+  bankAccountNumber String? @db.VarChar(60)
+  bankBranchCode    String? @db.VarChar(40)
+  bankAccountType   String? @db.VarChar(60)
+  bankSwift         String? @db.VarChar(40)
+
+  currency      String  @default("ZAR") @db.VarChar(3)
+  taxRegistered Boolean @default(true)
+  taxLabel      String  @default("VAT") @db.VarChar(20)
+  taxRate       Decimal @default(15) @db.Decimal(5, 2)
+
+  invoicePrefix String @default("INV-") @db.VarChar(12)
+  invoiceNext   Int    @default(1)
+  quotePrefix   String @default("QUO-") @db.VarChar(12)
+  quoteNext     Int    @default(1)
+  loadPrefix    String @default("LD-") @db.VarChar(12)
+  loadNext      Int    @default(1)
+
+  paymentTermsDays Int     @default(30)
+  invoiceNotes     String? @db.Text
+  quoteNotes       String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Customers (who we invoice) and subcontractors (trucking companies we pay).
+model Contact {
+  id            String      @id @default(cuid())
+  kind          ContactKind
+  name          String      @db.VarChar(160)
+  contactPerson String?     @db.VarChar(120)
+  email         String?     @db.VarChar(190)
+  phone         String?     @db.VarChar(40)
+  vatNumber     String?     @db.VarChar(60)
+  regNumber     String?     @db.VarChar(60)
+  address       String?     @db.Text
+  paymentTerms  Int?
+  notes         String?     @db.Text
+
+  bankName          String? @db.VarChar(120)
+  bankAccountName   String? @db.VarChar(160)
+  bankAccountNumber String? @db.VarChar(60)
+  bankBranchCode    String? @db.VarChar(40)
+
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customerLoads Load[]     @relation("LoadCustomer")
+  subbedLoads   Load[]     @relation("LoadSubcontractor")
+  documents     Document[]
+  bills         Bill[]
+  payments      Payment[]
+
+  @@index([kind, archived, name])
+}
+
+/// A job: freight moved for a customer, usually carried by a subcontractor.
+model Load {
+  id              String     @id @default(cuid())
+  number          String     @unique @db.VarChar(30)
+  status          LoadStatus @default(PLANNED)
+  customerId      String
+  customer        Contact    @relation("LoadCustomer", fields: [customerId], references: [id])
+  subcontractorId String?
+  subcontractor   Contact?   @relation("LoadSubcontractor", fields: [subcontractorId], references: [id])
+  customerRef     String?    @db.VarChar(80)
+  origin          String     @db.VarChar(190)
+  destination     String     @db.VarChar(190)
+  pickupDate      DateTime   @db.Date
+  deliveryDate    DateTime?  @db.Date
+  cargo           String?    @db.VarChar(255)
+  vehicleReg      String?    @db.VarChar(60)
+  driverName      String?    @db.VarChar(120)
+  driverPhone     String?    @db.VarChar(40)
+  /// What we charge the customer, excluding tax.
+  customerRate    Decimal    @default(0) @db.Decimal(14, 2)
+  /// What we pay the subcontractor, excluding tax.
+  subRate         Decimal    @default(0) @db.Decimal(14, 2)
+  podReceived     Boolean    @default(false)
+  notes           String?    @db.Text
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  lines       DocumentLine[]
+  bills       Bill[]
+  attachments Attachment[]
+
+  @@index([customerId])
+  @@index([subcontractorId])
+  @@index([status, pickupDate])
+}
+
+/// Customer-facing documents: tax invoices and quotes.
+model Document {
+  id         String    @id @default(cuid())
+  kind       DocKind
+  number     String    @db.VarChar(30)
+  status     DocStatus @default(DRAFT)
+  customerId String
+  customer   Contact   @relation(fields: [customerId], references: [id])
+  issueDate  DateTime  @db.Date
+  /// Due date for invoices, expiry date for quotes.
+  dueDate    DateTime  @db.Date
+  reference  String?   @db.VarChar(80)
+  notes      String?   @db.Text
+  subtotal   Decimal   @default(0) @db.Decimal(14, 2)
+  taxTotal   Decimal   @default(0) @db.Decimal(14, 2)
+  total      Decimal   @default(0) @db.Decimal(14, 2)
+  amountPaid Decimal   @default(0) @db.Decimal(14, 2)
+  sentAt     DateTime?
+  /// For invoices created from a quote.
+  quoteId    String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  lines    DocumentLine[]
+  payments Payment[]
+
+  @@unique([kind, number])
+  @@index([customerId])
+  @@index([kind, status, dueDate])
+  @@index([kind, issueDate])
+}
+
+model DocumentLine {
+  id          String   @id @default(cuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  loadId      String?
+  load        Load?    @relation(fields: [loadId], references: [id])
+  position    Int      @default(0)
+  description String   @db.Text
+  quantity    Decimal  @default(1) @db.Decimal(12, 2)
+  unitPrice   Decimal  @default(0) @db.Decimal(14, 2)
+  taxRate     Decimal  @default(0) @db.Decimal(5, 2)
+  /// quantity × unitPrice, excluding tax.
+  amount      Decimal  @default(0) @db.Decimal(14, 2)
+
+  @@index([documentId])
+  @@index([loadId])
+}
+
+/// A subcontractor's invoice to us (accounts payable).
+model Bill {
+  id              String     @id @default(cuid())
+  number          String     @db.VarChar(60)
+  status          BillStatus @default(OPEN)
+  subcontractorId String
+  subcontractor   Contact    @relation(fields: [subcontractorId], references: [id])
+  loadId          String?
+  load            Load?      @relation(fields: [loadId], references: [id])
+  issueDate       DateTime   @db.Date
+  dueDate         DateTime   @db.Date
+  subtotal        Decimal    @default(0) @db.Decimal(14, 2)
+  taxTotal        Decimal    @default(0) @db.Decimal(14, 2)
+  total           Decimal    @default(0) @db.Decimal(14, 2)
+  amountPaid      Decimal    @default(0) @db.Decimal(14, 2)
+  notes           String?    @db.Text
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  payments Payment[]
+
+  @@index([subcontractorId])
+  @@index([loadId])
+  @@index([status, dueDate])
+}
+
+/// Money in (against an invoice) or money out (against a bill).
+model Payment {
+  id         String           @id @default(cuid())
+  direction  PaymentDirection
+  contactId  String
+  contact    Contact          @relation(fields: [contactId], references: [id])
+  documentId String?
+  document   Document?        @relation(fields: [documentId], references: [id])
+  billId     String?
+  bill       Bill?            @relation(fields: [billId], references: [id])
+  date       DateTime         @db.Date
+  amount     Decimal          @db.Decimal(14, 2)
+  method     PaymentMethod    @default(EFT)
+  reference  String?          @db.VarChar(120)
+  notes      String?          @db.VarChar(255)
+  createdAt  DateTime         @default(now())
+
+  @@index([contactId])
+  @@index([documentId])
+  @@index([billId])
+  @@index([direction, date])
+}
+
+/// Day-to-day running costs that are not tied to a subcontractor bill.
+model Expense {
+  id          String        @id @default(cuid())
+  date        DateTime      @db.Date
+  category    String        @db.VarChar(60)
+  vendor      String?       @db.VarChar(160)
+  description String?       @db.VarChar(255)
+  /// Total paid, including tax.
+  amount      Decimal       @db.Decimal(14, 2)
+  taxAmount   Decimal       @default(0) @db.Decimal(14, 2)
+  method      PaymentMethod @default(EFT)
+  reference   String?       @db.VarChar(120)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([date])
+  @@index([category])
+}
+
+/// Files attached to a load (proof of delivery, rate confirmations, ...).
+model Attachment {
+  id        String   @id @default(cuid())
+  loadId    String
+  load      Load     @relation(fields: [loadId], references: [id], onDelete: Cascade)
+  label     String   @db.VarChar(40)
+  name      String   @db.VarChar(190)
+  mimeType  String   @db.VarChar(100)
+  size      Int
+  data      Bytes    @db.LongBlob
+  createdAt DateTime @default(now())
+
+  @@index([loadId])
+}

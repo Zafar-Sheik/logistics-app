@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6fe;
+  --color-brand-200: #bfd3fe;
+  --color-brand-300: #93b4fd;
+  --color-brand-400: #608bfa;
+  --color-brand-500: #3b66f5;
+  --color-brand-600: #2548ea;
+  --color-brand-700: #1d37d7;
+  --color-brand-800: #1e2fae;
+  --color-brand-900: #1e2d89;
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 3px rgb(15 23 42 / 0.06);
+  --animate-sheet: sheet 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-fade: fade 0.18s ease-out;
+}
+
+@keyframes sheet {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--color-slate-50);
+  color: var(--color-slate-900);
+}
+
+/* 16px inputs stop iOS Safari from zooming the page on focus. */
+input, select, textarea {
+  font-size: 16px;
+}
+@media (min-width: 1024px) {
+  input, select, textarea { font-size: 14px; }
+}
+
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.tabular { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+  html, body { height: auto !important; min-height: 0 !important; background: #fff; }
+  .lg\:pl-64 { padding-left: 0 !important; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .min-h-dvh { min-height: 0 !important; }
+  .no-print { display: none !important; }
+  .print-plain { box-shadow: none !important; border: 0 !important; padding: 0 !important; margin: 0 !important; max-width: none !important; }
+  main { padding: 0 !important; margin: 0 !important; }
+}
