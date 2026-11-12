@@ -3,7 +3,7 @@
  * Run with:  npm run db:check
  */
 import "dotenv/config";
-import mariadb from "mariadb";
+import mariadb, { type Connection } from "mariadb";
 import { connectionConfig } from "../src/lib/db-config";
 
 const HINTS: [RegExp, string][] = [
@@ -28,7 +28,7 @@ async function main() {
   }
   console.log(`\nConnecting to ${cfg.host}:${cfg.port} as "${cfg.user}", database "${cfg.database || "(none)"}", TLS ${cfg.ssl ? "on" : "off"}…`);
   const started = Date.now();
-  let conn: mariadb.Connection | undefined;
+  let conn: Connection | undefined;
   try {
     conn = await mariadb.createConnection({ host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database, connectTimeout: cfg.connectTimeout, ssl: cfg.ssl });
     console.log(`✔ Connected in ${Date.now() - started} ms`);
