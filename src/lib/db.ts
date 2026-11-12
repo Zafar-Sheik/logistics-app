@@ -4,7 +4,13 @@ import { PrismaClient } from "@/generated/prisma/client";
 import { connectionConfig } from "./db-config";
 
 function createClient() {
-  return new PrismaClient({ adapter: new PrismaMariaDb(connectionConfig()) });
+  const cfg = connectionConfig();
+  return new PrismaClient({
+    adapter: new PrismaMariaDb(cfg),
+    // Prisma's defaults (2s to get a connection, 5s to finish) are too tight for a
+    // cloud database in another region: opening a TLS connection alone can take longer.
+    transactionOptions: { maxWait: cfg.acquireTimeout, timeout: 60_000 },
+  });
 }
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };

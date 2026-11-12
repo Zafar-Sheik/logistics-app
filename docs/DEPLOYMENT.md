@@ -106,6 +106,9 @@ The app could not open any connection to TiDB. Run `npm run db:check` to see the
 
 Connections time out after 20 seconds and the pool waits up to 30 seconds. To change these, add `connect_timeout` or `pool_timeout` (in seconds) to the URL, e.g. `...?sslaccept=strict&connect_timeout=30`.
 
+**`Transaction API error: Unable to start a transaction in the given time` (P2028)**
+Saving setup, invoices, payments and anything that hands out a number runs in a transaction. TiDB closes connections that sit idle, so after a pause the app must open a new connection before it can save. On a slow or distant link that took longer than Prisma's default 2 seconds. The app now allows 30 seconds to start a transaction and 60 seconds to finish one. This error does not mean the tables are wrong; existing tables are expected.
+
 ## Technical notes
 
 - `relationMode = "prisma"` is used, so no database foreign keys are required and the schema works on every TiDB tier.
