@@ -3,6 +3,7 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "./db";
+import { forget, memo } from "./memo";
 import { SESSION_COOKIE, SESSION_DAYS, signSession, verifySession } from "./session";
 
 export async function startSession(userId: string) {
@@ -24,12 +25,20 @@ export async function endSession() {
 export const getUser = cache(async () => {
   const userId = await verifySession((await cookies()).get(SESSION_COOKIE)?.value);
   if (!userId) return null;
-  const user = await db.user.findUnique({
-    where: { id: userId },
-    select: { id: true, name: true, email: true, role: true, active: true, tutorialDone: true },
-  });
+  // Cached briefly so a page does not wait on the database just to know who you are.
+  const user = await memo(`user:${userId}`, 30_000, () =>
+    db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, role: true, active: true, tutorialDone: true },
+    }),
+  );
   return user?.active ? user : null;
 });
+
+/** Call after changing a user so the change shows on the next request. */
+export function forgetUser(userId?: string) {
+  forget(userId ? `user:${userId}` : "user:");
+}
 
 export async function requireUser() {
   const user = await getUser();
@@ -48,7 +57,15 @@ export async function requireAdmin() {
   return user;
 }
 
-export const getCompany = cache(async () => db.company.findUnique({ where: { id: 1 } }));
+/** Company profile, cached for a minute. Settings forms use getCompanyFresh(). */
+export const getCompany = cache(() => memo("company", 60_000, () => db.company.findUnique({ where: { id: 1 } })));
+
+export const getCompanyFresh = () => db.company.findUnique({ where: { id: 1 } });
+
+/** Call after changing company settings so the change shows on the next request. */
+export function forgetCompany() {
+  forget("company");
+}
 
 export async function requireCompany() {
   const company = await getCompany();

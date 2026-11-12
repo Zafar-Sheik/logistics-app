@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Package, Plus } from "lucide-react";
 import { db } from "@/lib/db";
+import { getContactNames, nameOf } from "@/lib/lookups";
 import { requireCompany } from "@/lib/auth";
 import { SearchBox } from "@/components/search-box";
 import { Badge, Card, EmptyState, FilterTabs, LinkButton, PageHeader, Pagination, Row, RowList } from "@/components/ui";
@@ -45,10 +46,9 @@ export default async function LoadsPage({ searchParams }: { searchParams: Search
     : {};
   const where = { AND: [filters[filter] ?? {}, search] };
 
-  const [rows, total, anyAtAll, toInvoice, active] = await Promise.all([
+  const [rows, total, anyAtAll, toInvoice, active, names] = await Promise.all([
     db.load.findMany({
       where,
-      include: { customer: { select: { name: true } }, subcontractor: { select: { name: true } } },
       orderBy: [{ pickupDate: "desc" }, { createdAt: "desc" }],
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
@@ -57,6 +57,7 @@ export default async function LoadsPage({ searchParams }: { searchParams: Search
     db.load.count(),
     db.load.count({ where: filters["to-invoice"] }),
     db.load.count({ where: filters.active }),
+    getContactNames(),
   ]);
 
   return (
@@ -98,11 +99,11 @@ export default async function LoadsPage({ searchParams }: { searchParams: Search
                   key={l.id}
                   href={`/loads/${l.id}`}
                   title={`${l.origin} → ${l.destination}`}
-                  subtitle={`${l.number} · ${l.customer.name}`}
+                  subtitle={`${l.number} · ${nameOf(names, l.customerId)}`}
                   meta={
                     <>
                       <Badge tone={LOAD_STATUS[l.status].tone}>{LOAD_STATUS[l.status].label}</Badge>
-                      <span className="text-xs text-slate-500">{fmtDate(l.pickupDate)}{l.subcontractor ? ` · ${l.subcontractor.name}` : ""}</span>
+                      <span className="text-xs text-slate-500">{fmtDate(l.pickupDate)}{l.subcontractorId ? ` · ${nameOf(names, l.subcontractorId)}` : ""}</span>
                     </>
                   }
                   right={money(l.customerRate, company.currency)}

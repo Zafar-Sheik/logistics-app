@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireCompany } from "@/lib/auth";
+import { getCompanyFresh } from "@/lib/auth";
 import { saveCompany } from "@/actions/settings";
 import { ActionForm, FormFooter, FormMessage, FormSection, SubmitButton, TextField } from "@/components/form";
 import { LogoUploader } from "@/components/logo-uploader";
@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Company & logo" };
 export default async function CompanySettingsPage() {
   const gate = await adminGate("Company & logo");
   if (gate) return gate;
-  const c = await requireCompany();
+  const c = (await getCompanyFresh())!;
   return (
     <>
       <PageHeader title="Company & logo" subtitle="These details appear on your invoices, quotes and statements." back={{ href: "/settings", label: "Settings" }} />

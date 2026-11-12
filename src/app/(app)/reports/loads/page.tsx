@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/lib/db";
+import { getContactNames, nameOf } from "@/lib/lookups";
 import { requireCompany } from "@/lib/auth";
 import { PeriodBar, PrintTitle, ReportHeader, Table, td, tdr } from "@/components/report";
 import { Card, CardHeader, Stat } from "@/components/ui";
@@ -14,12 +15,19 @@ export default async function LoadsReportPage({ searchParams }: { searchParams: 
   const company = await requireCompany();
   const cur = company.currency;
   const period = readPeriod(await searchParams);
-  const loads = await db.load.findMany({
-    where: { status: { not: "CANCELLED" }, pickupDate: { gte: parseDate(period.from), lte: parseDate(period.to) } },
-    include: { customer: { select: { id: true, name: true } }, subcontractor: { select: { name: true } } },
-    orderBy: { pickupDate: "desc" },
-    take: 1000,
-  });
+  const [rawLoads, names] = await Promise.all([
+    db.load.findMany({
+      where: { status: { not: "CANCELLED" }, pickupDate: { gte: parseDate(period.from), lte: parseDate(period.to) } },
+      orderBy: { pickupDate: "desc" },
+      take: 1000,
+    }),
+    getContactNames(),
+  ]);
+  const loads = rawLoads.map((l) => ({
+    ...l,
+    customer: { id: l.customerId, name: nameOf(names, l.customerId) },
+    subcontractor: l.subcontractorId ? { name: nameOf(names, l.subcontractorId) } : null,
+  }));
 
   const revenue = round2(loads.reduce((a, l) => a + num(l.customerRate), 0));
   const cost = round2(loads.reduce((a, l) => a + num(l.subRate), 0));

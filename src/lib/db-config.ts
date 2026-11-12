@@ -34,13 +34,17 @@ export function connectionConfig(raw = process.env.DATABASE_URL) {
     user: decodeURIComponent(url.username),
     password: decodeURIComponent(url.password),
     database: decodeURIComponent(url.pathname.replace(/^\//, "")),
-    connectionLimit: Number(p.get("connection_limit") ?? 5),
+    connectionLimit: Number(p.get("connection_limit") ?? 10),
+    // Only ping a pooled connection before reuse if it has been idle a while.
+    // The default (0.5s) adds a full round trip to TiDB to almost every page.
+    minDelayValidation: 10_000,
     // The driver's default connect timeout is 1 second, which is too short for a
     // TLS handshake with a cloud database in another region.
     connectTimeout: seconds("connect_timeout", 20_000),
     acquireTimeout: seconds("pool_timeout", 30_000),
-    // Drop idle connections before TiDB's gateway closes them on its side.
-    idleTimeout: 240,
+    // Keep a few connections open and ready; opening a new TLS connection is slow.
+    minimumIdle: 3,
+    idleTimeout: 600,
     ssl: wantsTls ? { rejectUnauthorized: !relaxed, minVersion: "TLSv1.2" as const } : undefined,
   };
 }

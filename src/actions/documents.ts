@@ -47,22 +47,22 @@ export async function saveDocument(kind: Kind, id: string | null, payload: Docum
   if (!parsed.success) return zodFail(parsed.error);
   const d = parsed.data;
 
-  const customer = await db.contact.findFirst({ where: { id: d.customerId, kind: "CUSTOMER" } });
-  if (!customer) return fail("Please fix the following:", { customerId: "Choose a customer" });
-
-  // Only loads that belong to this customer may be linked.
+  // All checks run side by side: customer exists, loads belong to them, loads not already invoiced.
   const loadIds = [...new Set(d.lines.map((l) => l.loadId).filter((x): x is string => !!x))];
-  if (loadIds.length) {
-    const valid = await db.load.count({ where: { id: { in: loadIds }, customerId: d.customerId } });
-    if (valid !== loadIds.length) return fail("One of the loads on this document belongs to a different customer.");
-    if (kind === "INVOICE") {
-      const clash = await db.documentLine.findFirst({
-        where: { loadId: { in: loadIds }, document: { kind: "INVOICE", status: { not: "VOID" }, ...(id ? { id: { not: id } } : {}) } },
-        include: { document: true, load: true },
-      });
-      if (clash) return fail(`Load ${clash.load?.number} is already on invoice ${clash.document.number}.`);
-    }
-  }
+  const [customer, valid, clash] = await Promise.all([
+    db.contact.findFirst({ where: { id: d.customerId, kind: "CUSTOMER" }, select: { id: true } }),
+    loadIds.length ? db.load.count({ where: { id: { in: loadIds }, customerId: d.customerId } }) : 0,
+    kind === "INVOICE" && loadIds.length
+      ? db.load.findFirst({
+          where: { id: { in: loadIds }, lines: { some: { document: { kind: "INVOICE", status: { not: "VOID" }, ...(id ? { id: { not: id } } : {}) } } } },
+          select: { number: true },
+        })
+      : null,
+  ]);
+  if (!customer) return fail("Please fix the following:", { customerId: "Choose a customer" });
+  // Only loads that belong to this customer may be linked.
+  if (valid !== loadIds.length) return fail("One of the loads on this document belongs to a different customer.");
+  if (clash) return fail(`Load ${clash.number} is already on another invoice. Void that invoice first, or remove the load from this one.`);
 
   const totals = calcTotals(d.lines.map((l) => ({ ...l, loadId: l.loadId ?? null })));
   const header = {

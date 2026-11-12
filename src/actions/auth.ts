@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { endSession, requireUser, startSession } from "@/lib/auth";
+import { endSession, forgetCompany, forgetUser, requireUser, startSession } from "@/lib/auth";
 import { f, fail, formObject, zodFail, type ActionState } from "@/lib/action";
 import { CURRENCIES } from "@/lib/format";
 
@@ -49,6 +49,7 @@ export async function setupAction(_: ActionState, fd: FormData): Promise<ActionS
     return tx.user.create({ data: { name: d.userName, email: d.email, passwordHash, role: "OWNER" } });
   });
   if (!user) return fail("This system has already been set up. Please sign in instead.");
+  forgetCompany();
 
   await startSession(user.id);
   redirect("/");
@@ -96,6 +97,7 @@ export async function logoutAction() {
 export async function setTutorialDone(done: boolean) {
   const user = await requireUser();
   await db.user.update({ where: { id: user.id }, data: { tutorialDone: done } });
+  forgetUser(user.id);
   revalidatePath("/", "layout");
 }
 
@@ -120,6 +122,7 @@ export async function updateProfileAction(_: ActionState, fd: FormData): Promise
   const parsed = profileSchema.safeParse(formObject(fd));
   if (!parsed.success) return zodFail(parsed.error);
   await db.user.update({ where: { id: me.id }, data: { name: parsed.data.name } });
+  forgetUser(me.id);
   revalidatePath("/", "layout");
   return { ok: true, message: "Profile saved." };
 }

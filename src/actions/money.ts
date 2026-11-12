@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireAdmin, requireUser } from "@/lib/auth";
+import { requireAdmin, requireCompany, requireUser } from "@/lib/auth";
 import { f, fail, formObject, zodFail, type ActionState } from "@/lib/action";
 import { balanceOf, EXPENSE_CATEGORIES } from "@/lib/domain";
 import { money, num, parseDate, round2 } from "@/lib/format";
@@ -27,11 +27,10 @@ const paymentSchema = z.object({
 
 /** Money received from a customer against an invoice. */
 export async function recordInvoicePayment(documentId: string, _: ActionState, fd: FormData): Promise<ActionState> {
-  await requireUser();
+  const [, company] = await Promise.all([requireUser(), requireCompany()]);
   const parsed = paymentSchema.safeParse(formObject(fd));
   if (!parsed.success) return zodFail(parsed.error);
   const d = parsed.data;
-  const company = await db.company.findUniqueOrThrow({ where: { id: 1 } });
 
   const result = await db.$transaction(async (tx) => {
     const doc = await tx.document.findFirst({ where: { id: documentId, kind: "INVOICE" } });
@@ -57,11 +56,10 @@ export async function recordInvoicePayment(documentId: string, _: ActionState, f
 
 /** Money paid to a subcontractor against a bill. */
 export async function recordBillPayment(billId: string, _: ActionState, fd: FormData): Promise<ActionState> {
-  await requireUser();
+  const [, company] = await Promise.all([requireUser(), requireCompany()]);
   const parsed = paymentSchema.safeParse(formObject(fd));
   if (!parsed.success) return zodFail(parsed.error);
   const d = parsed.data;
-  const company = await db.company.findUniqueOrThrow({ where: { id: 1 } });
 
   const result = await db.$transaction(async (tx) => {
     const bill = await tx.bill.findUnique({ where: { id: billId } });
@@ -131,13 +129,17 @@ export async function saveBill(id: string | null, _: ActionState, fd: FormData):
   if (!parsed.success) return zodFail(parsed.error);
   const d = parsed.data;
 
-  const sub = await db.contact.findFirst({ where: { id: d.subcontractorId, kind: "SUBCONTRACTOR" } });
+  const [sub, load, duplicate] = await Promise.all([
+    db.contact.findFirst({ where: { id: d.subcontractorId, kind: "SUBCONTRACTOR" }, select: { name: true } }),
+    d.loadId ? db.load.findUnique({ where: { id: d.loadId }, select: { id: true } }) : null,
+    db.bill.findFirst({
+      where: { subcontractorId: d.subcontractorId, number: d.number, status: { not: "VOID" }, ...(id ? { id: { not: id } } : {}) },
+      select: { id: true },
+    }),
+  ]);
   if (!sub) return fail("Please fix the following:", { subcontractorId: "Choose a subcontractor" });
-  if (d.loadId && !(await db.load.findUnique({ where: { id: d.loadId } }))) return fail("That load no longer exists.", { loadId: "Choose a load" });
+  if (d.loadId && !load) return fail("That load no longer exists.", { loadId: "Choose a load" });
 
-  const duplicate = await db.bill.findFirst({
-    where: { subcontractorId: d.subcontractorId, number: d.number, status: { not: "VOID" }, ...(id ? { id: { not: id } } : {}) },
-  });
   if (duplicate) return fail("Please fix the following:", { number: `You already captured invoice ${d.number} from ${sub.name}` });
 
   const taxTotal = round2((d.subtotal * d.taxRate) / 100);

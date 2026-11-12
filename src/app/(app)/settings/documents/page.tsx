@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireCompany } from "@/lib/auth";
+import { getCompanyFresh } from "@/lib/auth";
 import { saveDocumentSettings } from "@/actions/settings";
 import { ActionForm, CheckboxField, FormFooter, FormMessage, FormSection, SelectField, SubmitButton, TextAreaField, TextField } from "@/components/form";
 import { PageHeader } from "@/components/ui";
@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Invoice settings" };
 export default async function DocumentSettingsPage() {
   const gate = await adminGate("Invoice settings");
   if (gate) return gate;
-  const c = await requireCompany();
+  const c = (await getCompanyFresh())!;
   return (
     <>
       <PageHeader title="Invoice settings" subtitle="Tax, numbering and wording for invoices and quotes." back={{ href: "/settings", label: "Settings" }} />

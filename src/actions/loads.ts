@@ -34,9 +34,12 @@ export async function saveLoad(id: string | null, _: ActionState, fd: FormData):
   if (!parsed.success) return zodFail(parsed.error);
   const d = parsed.data;
 
-  const customer = await db.contact.findFirst({ where: { id: d.customerId, kind: "CUSTOMER" } });
+  const [customer, sub] = await Promise.all([
+    db.contact.findFirst({ where: { id: d.customerId, kind: "CUSTOMER" }, select: { id: true } }),
+    d.subcontractorId ? db.contact.findFirst({ where: { id: d.subcontractorId, kind: "SUBCONTRACTOR" }, select: { id: true } }) : null,
+  ]);
   if (!customer) return fail("Please fix the following:", { customerId: "Choose a customer" });
-  if (d.subcontractorId && !(await db.contact.findFirst({ where: { id: d.subcontractorId, kind: "SUBCONTRACTOR" } }))) {
+  if (d.subcontractorId && !sub) {
     return fail("Please fix the following:", { subcontractorId: "Choose a subcontractor" });
   }
 

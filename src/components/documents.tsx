@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRightLeft, Ban, Banknote, Building2, Check, FileText, Pencil, Plus, ScrollText, Send, Trash2, X } from "lucide-react";
 import { db } from "@/lib/db";
+import { getContactNames, nameOf } from "@/lib/lookups";
 import { isAdmin, requireCompany, requireUser } from "@/lib/auth";
 import { convertQuoteToInvoice, deleteDocument, markDocumentSent, setQuoteStatus, voidDocument } from "@/actions/documents";
 import { deletePayment, recordInvoicePayment } from "@/actions/money";
@@ -49,13 +50,14 @@ export async function DocList({ kind, searchParams }: { kind: Kind; searchParams
   const search: Prisma.DocumentWhereInput = q ? { OR: [{ number: { contains: q } }, { reference: { contains: q } }, { customer: { name: { contains: q } } }] } : {};
   const where: Prisma.DocumentWhereInput = { AND: [{ kind }, filters[filter] ?? {}, search] };
 
-  const [rows, total, anyAtAll, open, overdue, drafts] = await Promise.all([
-    db.document.findMany({ where, include: { customer: { select: { name: true } } }, orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }], skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+  const [rows, total, anyAtAll, open, overdue, drafts, names] = await Promise.all([
+    db.document.findMany({ where, orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }], skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
     db.document.count({ where }),
     db.document.count({ where: { kind } }),
     db.document.aggregate({ where: { kind: "INVOICE", status: "SENT" }, _sum: { total: true, amountPaid: true }, _count: true }),
     db.document.aggregate({ where: { kind: "INVOICE", status: "SENT", dueDate: { lt: todayDate } }, _sum: { total: true, amountPaid: true }, _count: true }),
     db.document.count({ where: { kind, status: "DRAFT" } }),
+    getContactNames(),
   ]);
 
   const tabs =
@@ -115,7 +117,7 @@ export async function DocList({ kind, searchParams }: { kind: Kind; searchParams
                   <Row
                     key={d.id}
                     href={`${m.base}/${d.id}`}
-                    title={d.customer.name}
+                    title={nameOf(names, d.customerId)}
                     subtitle={`${d.number} · ${fmtDate(d.issueDate)}`}
                     meta={<><Badge tone={s.tone}>{s.label}</Badge>{kind === "INVOICE" && d.status === "SENT" && <span className="text-xs text-slate-500">due {fmtDate(d.dueDate)}</span>}</>}
                     right={money(d.total, cur)}
@@ -136,9 +138,31 @@ export async function DocList({ kind, searchParams }: { kind: Kind; searchParams
 
 export async function DocFormPage({ kind, id, preset }: { kind: Kind; id?: string; preset?: { load?: string; customer?: string } }) {
   const m = meta(kind);
-  const company = await requireCompany();
-  const existing = id ? await db.document.findFirst({ where: { id, kind }, include: { lines: { orderBy: { position: "asc" } } } }) : null;
+  // Document, customers and invoiceable loads are fetched side by side.
+  const [company, existing, allCustomers, loads] = await Promise.all([
+    requireCompany(),
+    id
+      ? Promise.all([
+          db.document.findFirst({ where: { id, kind } }),
+          db.documentLine.findMany({ where: { documentId: id }, orderBy: { position: "asc" } }),
+        ]).then(([d, lines]) => (d ? { ...d, lines } : null))
+      : null,
+    db.contact.findMany({
+      where: { kind: "CUSTOMER", OR: [{ archived: false }, ...(id ? [{ documents: { some: { id } } }] : [])] },
+      select: { id: true, name: true, paymentTerms: true },
+      orderBy: { name: "asc" },
+    }),
+    // Loads that can still be invoiced (not cancelled, not on another live invoice).
+    kind === "INVOICE"
+      ? db.load.findMany({
+          where: { status: { not: "CANCELLED" }, lines: { none: { document: { kind: "INVOICE", status: { not: "VOID" }, ...(id ? { id: { not: id } } : {}) } } } },
+          orderBy: { pickupDate: "desc" },
+          take: 300,
+        })
+      : [],
+  ]);
   if (id && !existing) notFound();
+  const customers = allCustomers;
 
   const back = { href: existing ? `${m.base}/${existing.id}` : m.base, label: existing ? existing.number : m.many };
   if (existing && (["VOID", "PAID"].includes(existing.status) || num(existing.amountPaid) > 0)) {
@@ -150,11 +174,6 @@ export async function DocFormPage({ kind, id, preset }: { kind: Kind; id?: strin
     );
   }
 
-  const customers = await db.contact.findMany({
-    where: { kind: "CUSTOMER", OR: [{ archived: false }, ...(existing ? [{ id: existing.customerId }] : [])] },
-    select: { id: true, name: true, paymentTerms: true },
-    orderBy: { name: "asc" },
-  });
   if (customers.length === 0) {
     return (
       <>
@@ -164,15 +183,6 @@ export async function DocFormPage({ kind, id, preset }: { kind: Kind; id?: strin
     );
   }
 
-  // Loads that can still be invoiced (not cancelled, not on another live invoice).
-  const loads =
-    kind === "INVOICE"
-      ? await db.load.findMany({
-          where: { status: { not: "CANCELLED" }, lines: { none: { document: { kind: "INVOICE", status: { not: "VOID" }, ...(id ? { id: { not: id } } : {}) } } } },
-          orderBy: { pickupDate: "desc" },
-          take: 300,
-        })
-      : [];
 
   const today = todayISO();
   const taxRate = company.taxRegistered ? num(company.taxRate) : 0;
@@ -221,8 +231,14 @@ export async function DocFormPage({ kind, id, preset }: { kind: Kind; id?: strin
 
 export async function DocDetail({ kind, id }: { kind: Kind; id: string }) {
   const m = meta(kind);
-  const user = await requireUser();
-  const doc = await getDocumentView(id);
+  const [user, doc, invoiceFromQuote, sourceQuote] = await Promise.all([
+    requireUser(),
+    getDocumentView(id),
+    kind === "QUOTE" ? db.document.findFirst({ where: { quoteId: id, kind: "INVOICE", status: { not: "VOID" } }, select: { id: true, number: true } }) : null,
+    kind === "INVOICE"
+      ? db.$queryRaw<{ id: string; number: string }[]>`SELECT q.id, q.number FROM Document i JOIN Document q ON q.id = i.quoteId WHERE i.id = ${id}`.then((r) => r[0] ?? null)
+      : null,
+  ]);
   if (!doc || doc.kind !== kind) notFound();
   const cur = doc.currency;
   const today = todayISO();
@@ -231,10 +247,6 @@ export async function DocDetail({ kind, id }: { kind: Kind; id: string }) {
   const editable = !["VOID", "PAID"].includes(doc.rawStatus) && doc.amountPaid === 0;
   const canPay = isInvoice && ["DRAFT", "SENT"].includes(doc.rawStatus) && doc.balance > 0;
 
-  const [invoiceFromQuote, sourceQuote] = await Promise.all([
-    !isInvoice ? db.document.findFirst({ where: { quoteId: id, kind: "INVOICE", status: { not: "VOID" } }, select: { id: true, number: true } }) : null,
-    isInvoice && doc.quoteId ? db.document.findUnique({ where: { id: doc.quoteId }, select: { id: true, number: true } }) : null,
-  ]);
 
   const bank = doc.company.bank;
   const greeting = `Hi${doc.customer.contactPerson ? ` ${doc.customer.contactPerson.split(" ")[0]}` : ""},`;

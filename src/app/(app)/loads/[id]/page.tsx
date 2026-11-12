@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, Ban, Check, CheckCircle2, FileText, MapPin, Pencil, Phone, Receipt, RotateCcw, Trash2, Truck } from "lucide-react";
 import { db } from "@/lib/db";
+import { getContactNames, nameOf } from "@/lib/lookups";
 import { isAdmin, requireCompany, requireUser } from "@/lib/auth";
 import { deleteLoad, setLoadStatus, setPodReceived } from "@/actions/loads";
 import { Attachments } from "@/components/attachments";
@@ -12,23 +13,27 @@ import { cx, fmtDate, money, num, todayISO } from "@/lib/format";
 
 export default async function LoadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const user = await requireUser();
-  const company = await requireCompany();
-  const load = await db.load.findUnique({
-    where: { id },
-    include: {
-      customer: true,
-      subcontractor: true,
-      lines: { include: { document: true } },
-      bills: { where: { status: { not: "VOID" } }, orderBy: { createdAt: "asc" } },
-      attachments: { select: { id: true, name: true, label: true, mimeType: true, size: true, createdAt: true }, orderBy: { createdAt: "desc" } },
-    },
-  });
-  if (!load) notFound();
+  // Everything is fetched side by side (one round trip), keyed on the load id.
+  const [user, company, base, docs, bills, attachments, names] = await Promise.all([
+    requireUser(),
+    requireCompany(),
+    db.load.findUnique({ where: { id } }),
+    db.document.findMany({ where: { lines: { some: { loadId: id } } }, orderBy: { createdAt: "asc" } }),
+    db.bill.findMany({ where: { loadId: id, status: { not: "VOID" } }, orderBy: { createdAt: "asc" } }),
+    db.attachment.findMany({ where: { loadId: id }, select: { id: true, name: true, label: true, mimeType: true, size: true, createdAt: true }, orderBy: { createdAt: "desc" } }),
+    getContactNames(),
+  ]);
+  if (!base) notFound();
+  const load = {
+    ...base,
+    bills,
+    attachments,
+    customer: { name: nameOf(names, base.customerId) },
+    subcontractor: base.subcontractorId ? { name: nameOf(names, base.subcontractorId) } : null,
+  };
 
   const cur = company.currency;
   const today = todayISO();
-  const docs = [...new Map(load.lines.map((l) => [l.document.id, l.document])).values()];
   const invoices = docs.filter((d) => d.kind === "INVOICE" && d.status !== "VOID");
   const quotes = docs.filter((d) => d.kind === "QUOTE");
   const invoice = invoices[0];

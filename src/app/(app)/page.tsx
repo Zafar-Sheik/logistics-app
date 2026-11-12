@@ -6,12 +6,11 @@ import { requireCompany, requireUser } from "@/lib/auth";
 import { Badge, Card, CardHeader, LinkButton, Row } from "@/components/ui";
 import { LOAD_STATUS } from "@/lib/domain";
 import { addMonths, cx, endOfMonth, fmtDate, fmtMonth, money, moneyShort, num, parseDate, round2, startOfMonth, todayISO } from "@/lib/format";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
+import { getContactNames, nameOf } from "@/lib/lookups";
 
 export const metadata: Metadata = { title: "Home" };
 
-const NOT_INVOICED: Prisma.LoadWhereInput = { lines: { none: { document: { kind: "INVOICE", status: { not: "VOID" } } } } };
-const READY_BILLS: Prisma.BillWhereInput = { status: "OPEN", load: { lines: { some: { document: { kind: "INVOICE", status: "PAID" } } } } };
 
 type MonthRow = { m: string; total: unknown };
 
@@ -24,43 +23,69 @@ export default async function HomePage() {
   const monthRange = { gte: parseDate(startOfMonth(today)), lte: parseDate(endOfMonth(today)) };
   const chartStart = parseDate(addMonths(today, -5));
 
-  const [
-    receivable, overdue, payable, readyBills,
-    monthIncome, monthCosts, monthExpenses,
-    activeLoads, toInvoice, drafts, noPod, noBill,
-    counts, recentLoads, payIn, payOut, expOut,
-  ] = await Promise.all([
-    db.document.aggregate({ where: { kind: "INVOICE", status: "SENT" }, _sum: { total: true, amountPaid: true }, _count: true }),
-    db.document.aggregate({ where: { kind: "INVOICE", status: "SENT", dueDate: { lt: todayDate } }, _sum: { total: true, amountPaid: true }, _count: true }),
-    db.bill.aggregate({ where: { status: "OPEN" }, _sum: { total: true, amountPaid: true }, _count: true }),
-    db.bill.aggregate({ where: READY_BILLS, _sum: { total: true, amountPaid: true }, _count: true }),
-    db.document.aggregate({ where: { kind: "INVOICE", status: { in: ["SENT", "PAID"] }, issueDate: monthRange }, _sum: { subtotal: true } }),
-    db.bill.aggregate({ where: { status: { not: "VOID" }, issueDate: monthRange }, _sum: { subtotal: true } }),
-    db.expense.aggregate({ where: { date: monthRange }, _sum: { amount: true, taxAmount: true } }),
-    db.load.count({ where: { status: { in: ["PLANNED", "IN_TRANSIT"] } } }),
-    db.load.count({ where: { status: "DELIVERED", ...NOT_INVOICED } }),
-    db.document.count({ where: { kind: "INVOICE", status: "DRAFT" } }),
-    db.load.count({ where: { status: "DELIVERED", podReceived: false } }),
-    db.load.count({ where: { status: "DELIVERED", subcontractorId: { not: null }, bills: { none: { status: { not: "VOID" } } } } }),
-    Promise.all([
-      db.contact.count({ where: { kind: "CUSTOMER" } }),
-      db.contact.count({ where: { kind: "SUBCONTRACTOR" } }),
-      db.load.count(),
-      db.document.count({ where: { kind: "INVOICE" } }),
-      db.payment.count(),
-    ]),
-    db.load.findMany({ where: { status: { in: ["PLANNED", "IN_TRANSIT"] } }, include: { customer: { select: { name: true } } }, orderBy: { pickupDate: "asc" }, take: 5 }),
-    db.$queryRaw<MonthRow[]>`SELECT DATE_FORMAT(\`date\`, '%Y-%m') AS m, SUM(amount) AS total FROM Payment WHERE direction = 'IN' AND \`date\` >= ${chartStart} GROUP BY m`,
-    db.$queryRaw<MonthRow[]>`SELECT DATE_FORMAT(\`date\`, '%Y-%m') AS m, SUM(amount) AS total FROM Payment WHERE direction = 'OUT' AND \`date\` >= ${chartStart} GROUP BY m`,
-    db.$queryRaw<MonthRow[]>`SELECT DATE_FORMAT(\`date\`, '%Y-%m') AS m, SUM(amount) AS total FROM Expense WHERE \`date\` >= ${chartStart} GROUP BY m`,
+  // Every figure on this screen comes from one query, so Home costs a single round trip.
+  type Stats = Record<
+    | "owed" | "owedCount" | "overdueAmt" | "overdueCount" | "owing" | "owingCount" | "readyAmt" | "readyCount"
+    | "monthIncome" | "monthCosts" | "monthExpenses" | "activeLoads" | "toInvoice" | "drafts" | "noPod" | "noBill"
+    | "customerCount" | "subCount" | "loadCount" | "invoiceCount" | "paymentCount",
+    unknown
+  >;
+  const mFrom = monthRange.gte;
+  const mTo = monthRange.lte;
+  const paidInvoiceForLoad = Prisma.sql`SELECT 1 FROM DocumentLine dl JOIN Document d ON d.id = dl.documentId WHERE dl.loadId = b.loadId AND d.kind = 'INVOICE' AND d.status = 'PAID'`;
+  const [statsRows, recentLoads, cashRows, names] = await Promise.all([
+    db.$queryRaw<Stats[]>`
+      SELECT
+        (SELECT COALESCE(SUM(total - amountPaid), 0) FROM Document WHERE kind = 'INVOICE' AND status = 'SENT') AS owed,
+        (SELECT COUNT(*) FROM Document WHERE kind = 'INVOICE' AND status = 'SENT') AS owedCount,
+        (SELECT COALESCE(SUM(total - amountPaid), 0) FROM Document WHERE kind = 'INVOICE' AND status = 'SENT' AND dueDate < ${todayDate}) AS overdueAmt,
+        (SELECT COUNT(*) FROM Document WHERE kind = 'INVOICE' AND status = 'SENT' AND dueDate < ${todayDate}) AS overdueCount,
+        (SELECT COALESCE(SUM(total - amountPaid), 0) FROM Bill WHERE status = 'OPEN') AS owing,
+        (SELECT COUNT(*) FROM Bill WHERE status = 'OPEN') AS owingCount,
+        (SELECT COALESCE(SUM(b.total - b.amountPaid), 0) FROM Bill b WHERE b.status = 'OPEN' AND EXISTS (${paidInvoiceForLoad})) AS readyAmt,
+        (SELECT COUNT(*) FROM Bill b WHERE b.status = 'OPEN' AND EXISTS (${paidInvoiceForLoad})) AS readyCount,
+        (SELECT COALESCE(SUM(subtotal), 0) FROM Document WHERE kind = 'INVOICE' AND status IN ('SENT', 'PAID') AND issueDate BETWEEN ${mFrom} AND ${mTo}) AS monthIncome,
+        (SELECT COALESCE(SUM(subtotal), 0) FROM Bill WHERE status <> 'VOID' AND issueDate BETWEEN ${mFrom} AND ${mTo}) AS monthCosts,
+        (SELECT COALESCE(SUM(amount - taxAmount), 0) FROM Expense WHERE \`date\` BETWEEN ${mFrom} AND ${mTo}) AS monthExpenses,
+        (SELECT COUNT(*) FROM \`Load\` WHERE status IN ('PLANNED', 'IN_TRANSIT')) AS activeLoads,
+        (SELECT COUNT(*) FROM \`Load\` l WHERE l.status = 'DELIVERED' AND NOT EXISTS (
+          SELECT 1 FROM DocumentLine dl JOIN Document d ON d.id = dl.documentId WHERE dl.loadId = l.id AND d.kind = 'INVOICE' AND d.status <> 'VOID')) AS toInvoice,
+        (SELECT COUNT(*) FROM Document WHERE kind = 'INVOICE' AND status = 'DRAFT') AS drafts,
+        (SELECT COUNT(*) FROM \`Load\` WHERE status = 'DELIVERED' AND podReceived = FALSE) AS noPod,
+        (SELECT COUNT(*) FROM \`Load\` l WHERE l.status = 'DELIVERED' AND l.subcontractorId IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM Bill b WHERE b.loadId = l.id AND b.status <> 'VOID')) AS noBill,
+        (SELECT COUNT(*) FROM Contact WHERE kind = 'CUSTOMER') AS customerCount,
+        (SELECT COUNT(*) FROM Contact WHERE kind = 'SUBCONTRACTOR') AS subCount,
+        (SELECT COUNT(*) FROM \`Load\`) AS loadCount,
+        (SELECT COUNT(*) FROM Document WHERE kind = 'INVOICE') AS invoiceCount,
+        (SELECT COUNT(*) FROM Payment) AS paymentCount`,
+    db.load.findMany({ where: { status: { in: ["PLANNED", "IN_TRANSIT"] } }, orderBy: { pickupDate: "asc" }, take: 5 }),
+    db.$queryRaw<(MonthRow & { kind: string })[]>`
+      SELECT 'in' AS kind, DATE_FORMAT(\`date\`, '%Y-%m') AS m, SUM(amount) AS total FROM Payment WHERE direction = 'IN' AND \`date\` >= ${chartStart} GROUP BY m
+      UNION ALL
+      SELECT 'out', DATE_FORMAT(\`date\`, '%Y-%m'), SUM(amount) FROM Payment WHERE direction = 'OUT' AND \`date\` >= ${chartStart} GROUP BY DATE_FORMAT(\`date\`, '%Y-%m')
+      UNION ALL
+      SELECT 'exp', DATE_FORMAT(\`date\`, '%Y-%m'), SUM(amount) FROM Expense WHERE \`date\` >= ${chartStart} GROUP BY DATE_FORMAT(\`date\`, '%Y-%m')`,
+    getContactNames(),
   ]);
+  const st = statsRows[0];
+  const n = (k: keyof Stats) => num(st[k]);
+  const payIn = cashRows.filter((r) => r.kind === "in");
+  const payOut = cashRows.filter((r) => r.kind === "out");
+  const expOut = cashRows.filter((r) => r.kind === "exp");
 
-  const [customerCount, subCount, loadCount, invoiceCount, paymentCount] = counts;
-  const owed = round2(num(receivable._sum.total) - num(receivable._sum.amountPaid));
-  const overdueAmt = round2(num(overdue._sum.total) - num(overdue._sum.amountPaid));
-  const owing = round2(num(payable._sum.total) - num(payable._sum.amountPaid));
-  const readyAmt = round2(num(readyBills._sum.total) - num(readyBills._sum.amountPaid));
-  const profit = round2(num(monthIncome._sum.subtotal) - num(monthCosts._sum.subtotal) - (num(monthExpenses._sum.amount) - num(monthExpenses._sum.taxAmount)));
+  const customerCount = n("customerCount"), subCount = n("subCount"), loadCount = n("loadCount"), invoiceCount = n("invoiceCount"), paymentCount = n("paymentCount");
+  const activeLoads = n("activeLoads"), toInvoice = n("toInvoice"), drafts = n("drafts"), noPod = n("noPod"), noBill = n("noBill");
+  const owed = round2(n("owed"));
+  const overdueAmt = round2(n("overdueAmt"));
+  const owing = round2(n("owing"));
+  const readyAmt = round2(n("readyAmt"));
+  const receivable = { _count: n("owedCount") };
+  const overdue = { _count: n("overdueCount") };
+  const payable = { _count: n("owingCount") };
+  const readyBills = { _count: n("readyCount") };
+  const monthIncome = { _sum: { subtotal: n("monthIncome") } };
+  const profit = round2(n("monthIncome") - n("monthCosts") - n("monthExpenses"));
 
   // ---- Things to do -------------------------------------------------------
   const todo = [
@@ -228,7 +253,7 @@ export default async function HomePage() {
         ) : (
           <div className="divide-y divide-slate-100 border-t border-slate-100">
             {recentLoads.map((l) => (
-              <Row key={l.id} href={`/loads/${l.id}`} title={`${l.origin} → ${l.destination}`} subtitle={`${l.number} · ${l.customer.name} · ${fmtDate(l.pickupDate)}`} rightSub={<Badge tone={LOAD_STATUS[l.status].tone}>{LOAD_STATUS[l.status].label}</Badge>} />
+              <Row key={l.id} href={`/loads/${l.id}`} title={`${l.origin} → ${l.destination}`} subtitle={`${l.number} · ${nameOf(names, l.customerId)} · ${fmtDate(l.pickupDate)}`} rightSub={<Badge tone={LOAD_STATUS[l.status].tone}>{LOAD_STATUS[l.status].label}</Badge>} />
             ))}
           </div>
         )}

@@ -1,18 +1,21 @@
 import "server-only";
 import { db } from "./db";
+import { getCompany } from "./auth";
 import { balanceOf, docStatus } from "./domain";
 import { fmtDate, isoDate, num, todayISO } from "./format";
 
 /** Everything needed to draw an invoice or quote, as plain serialisable data. */
 export async function getDocumentView(id: string) {
-  const [doc, company] = await Promise.all([
-    db.document.findUnique({
-      where: { id },
-      include: { customer: true, lines: { orderBy: { position: "asc" } }, payments: { orderBy: { date: "asc" } } },
-    }),
-    db.company.findUnique({ where: { id: 1 } }),
+  // Side by side rather than nested includes: one round trip instead of two or three.
+  const [base, customer, lines, payments, company] = await Promise.all([
+    db.document.findUnique({ where: { id } }),
+    db.contact.findFirst({ where: { documents: { some: { id } } } }),
+    db.documentLine.findMany({ where: { documentId: id }, orderBy: { position: "asc" } }),
+    db.payment.findMany({ where: { documentId: id }, orderBy: { date: "asc" } }),
+    getCompany(),
   ]);
-  if (!doc || !company) return null;
+  if (!base || !customer || !company) return null;
+  const doc = { ...base, customer, lines, payments };
 
   const isInvoice = doc.kind === "INVOICE";
   const status = docStatus(doc, todayISO());

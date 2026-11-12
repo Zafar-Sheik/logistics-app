@@ -8,7 +8,8 @@ import { Card, EmptyState, FilterTabs, LinkButton, PageHeader, Pagination, RowLi
 import { PAYMENT_METHODS } from "@/lib/domain";
 import { fmtDate, money } from "@/lib/format";
 import { linker, one, PAGE_SIZE, pageOf, type SearchParams } from "@/lib/params";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
+import { likeTerm } from "@/lib/lookups";
 
 export const metadata: Metadata = { title: "Payments" };
 
@@ -25,11 +26,32 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Sea
     ...(filter === "in" ? { direction: "IN" } : filter === "out" ? { direction: "OUT" } : {}),
     ...(q ? { OR: [{ reference: { contains: q } }, { contact: { name: { contains: q } } }, { document: { number: { contains: q } } }, { bill: { number: { contains: q } } }] } : {}),
   };
-  const [rows, total, anyAtAll] = await Promise.all([
-    db.payment.findMany({ where, include: { contact: { select: { name: true } }, document: { select: { id: true, number: true } }, bill: { select: { id: true, number: true } } }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+  // One joined query for the page of rows (name and document number included).
+  const like = likeTerm(q);
+  const sqlWhere = Prisma.sql`${filter === "in" ? Prisma.sql`p.direction = 'IN'` : filter === "out" ? Prisma.sql`p.direction = 'OUT'` : Prisma.sql`TRUE`}
+    AND ${q ? Prisma.sql`(p.reference LIKE ${like} OR c.name LIKE ${like} OR d.number LIKE ${like} OR b.number LIKE ${like})` : Prisma.sql`TRUE`}`;
+  type PaymentRow = { id: string; direction: string; date: Date; amount: unknown; method: string; reference: string | null; contactName: string; documentId: string | null; documentNumber: string | null; billId: string | null; billNumber: string | null };
+
+  const [rawRows, total, anyAtAll] = await Promise.all([
+    db.$queryRaw<PaymentRow[]>`
+      SELECT p.id, p.direction, p.date, p.amount, p.method, p.reference, c.name AS contactName,
+             d.id AS documentId, d.number AS documentNumber, b.id AS billId, b.number AS billNumber
+      FROM Payment p
+      JOIN Contact c ON c.id = p.contactId
+      LEFT JOIN Document d ON d.id = p.documentId
+      LEFT JOIN Bill b ON b.id = p.billId
+      WHERE ${sqlWhere}
+      ORDER BY p.date DESC, p.createdAt DESC, p.id
+      LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE}`,
     db.payment.count({ where }),
     db.payment.count(),
   ]);
+  const rows = rawRows.map((p) => ({
+    ...p,
+    contact: { name: p.contactName },
+    document: p.documentId ? { id: p.documentId, number: p.documentNumber! } : null,
+    bill: p.billId ? { id: p.billId, number: p.billNumber! } : null,
+  }));
 
   return (
     <>

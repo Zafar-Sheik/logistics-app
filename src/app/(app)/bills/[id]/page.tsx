@@ -12,25 +12,24 @@ import { CURRENCIES, fmtDate, money, num, todayISO } from "@/lib/format";
 
 export default async function BillPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const user = await requireUser();
-  const company = await requireCompany();
-  const bill = await db.bill.findUnique({
-    where: { id },
-    include: {
-      subcontractor: true,
-      payments: { orderBy: { date: "asc" } },
-      load: { include: { lines: { where: { document: { kind: "INVOICE", status: { not: "VOID" } } }, include: { document: true } } } },
-    },
-  });
-  if (!bill) notFound();
+  // All lookups run side by side (one round trip), using relation filters on the bill id.
+  const [user, company, base, sub, payments, load, invoices] = await Promise.all([
+    requireUser(),
+    requireCompany(),
+    db.bill.findUnique({ where: { id } }),
+    db.contact.findFirst({ where: { bills: { some: { id } } } }),
+    db.payment.findMany({ where: { billId: id }, orderBy: { date: "asc" } }),
+    db.load.findFirst({ where: { bills: { some: { id } } } }),
+    db.document.findMany({ where: { kind: "INVOICE", status: { not: "VOID" }, lines: { some: { load: { bills: { some: { id } } } } } } }),
+  ]);
+  if (!base || !sub) notFound();
+  const bill = { ...base, payments, load };
 
   const cur = company.currency;
   const today = todayISO();
   const s = billStatus(bill, today);
   const balance = balanceOf(bill);
   const admin = isAdmin(user);
-  const sub = bill.subcontractor;
-  const invoices = bill.load ? [...new Map(bill.load.lines.map((l) => [l.document.id, l.document])).values()] : [];
   const customerPaid = invoices.length > 0 && invoices.every((d) => d.status === "PAID");
   const open = bill.status === "OPEN";
 

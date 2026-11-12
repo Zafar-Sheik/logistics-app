@@ -31,24 +31,17 @@ export async function ContactList({ kind, searchParams }: { kind: Kind; searchPa
     archived: show === "archived",
     ...(q ? { OR: [{ name: { contains: q } }, { contactPerson: { contains: q } }, { email: { contains: q } }, { phone: { contains: q } }] } : {}),
   };
-  const [rows, total, anyAtAll] = await Promise.all([
+  // Outstanding balances are fetched for everyone at once, alongside the list,
+  // rather than waiting for the page of rows first.
+  const [rows, total, anyAtAll, owed] = await Promise.all([
     db.contact.findMany({ where, orderBy: { name: "asc" }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
     db.contact.count({ where }),
     db.contact.count({ where: { kind } }),
+    kind === "CUSTOMER"
+      ? db.document.groupBy({ by: ["customerId"], where: { kind: "INVOICE", status: "SENT" }, _sum: { total: true, amountPaid: true } }).then((g) => g.map((r) => [r.customerId, r._sum] as const))
+      : db.bill.groupBy({ by: ["subcontractorId"], where: { status: "OPEN" }, _sum: { total: true, amountPaid: true } }).then((g) => g.map((r) => [r.subcontractorId, r._sum] as const)),
   ]);
-
-  // Outstanding balance per contact, for the rows on this page.
-  const ids = rows.map((r) => r.id);
-  const balances = new Map<string, number>();
-  if (ids.length) {
-    if (kind === "CUSTOMER") {
-      const g = await db.document.groupBy({ by: ["customerId"], where: { customerId: { in: ids }, kind: "INVOICE", status: "SENT" }, _sum: { total: true, amountPaid: true } });
-      for (const r of g) balances.set(r.customerId, round2(num(r._sum.total) - num(r._sum.amountPaid)));
-    } else {
-      const g = await db.bill.groupBy({ by: ["subcontractorId"], where: { subcontractorId: { in: ids }, status: "OPEN" }, _sum: { total: true, amountPaid: true } });
-      for (const r of g) balances.set(r.subcontractorId, round2(num(r._sum.total) - num(r._sum.amountPaid)));
-    }
-  }
+  const balances = new Map(owed.map(([id, sum]) => [id, round2(num(sum.total) - num(sum.amountPaid))]));
 
   return (
     <>
@@ -151,20 +144,19 @@ export async function ContactFormPage({ kind, id, returnTo }: { kind: Kind; id?:
 
 export async function ContactDetail({ kind, id }: { kind: Kind; id: string }) {
   const m = meta(kind);
-  const user = await requireUser();
-  const company = await requireCompany();
-  const c = await db.contact.findFirst({ where: { id, kind } });
-  if (!c) notFound();
-  const today = todayISO();
-  const cur = company.currency;
   const isCustomer = kind === "CUSTOMER";
-
-  const [loads, docs, bills, loadCount] = await Promise.all([
+  const [user, company, c, loads, docs, bills, loadCount] = await Promise.all([
+    requireUser(),
+    requireCompany(),
+    db.contact.findFirst({ where: { id, kind } }),
     db.load.findMany({ where: isCustomer ? { customerId: id } : { subcontractorId: id }, orderBy: { pickupDate: "desc" }, take: 5 }),
     isCustomer ? db.document.findMany({ where: { customerId: id, kind: "INVOICE", status: { not: "VOID" } }, orderBy: { issueDate: "desc" } }) : [],
     !isCustomer ? db.bill.findMany({ where: { subcontractorId: id, status: { not: "VOID" } }, orderBy: { issueDate: "desc" } }) : [],
     db.load.count({ where: isCustomer ? { customerId: id } : { subcontractorId: id } }),
   ]);
+  if (!c) notFound();
+  const today = todayISO();
+  const cur = company.currency;
 
   const items = isCustomer ? docs.filter((d) => d.status !== "DRAFT") : bills;
   const billed = items.reduce((a, d) => a + num(d.total), 0);

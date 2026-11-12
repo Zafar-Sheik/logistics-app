@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireCompany } from "@/lib/auth";
+import { getCompanyFresh } from "@/lib/auth";
 import { saveBanking } from "@/actions/settings";
 import { ActionForm, FormFooter, FormMessage, FormSection, SubmitButton, TextField } from "@/components/form";
 import { PageHeader } from "@/components/ui";
@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Banking details" };
 export default async function BankingSettingsPage() {
   const gate = await adminGate("Banking details");
   if (gate) return gate;
-  const c = await requireCompany();
+  const c = (await getCompanyFresh())!;
   return (
     <>
       <PageHeader title="Banking details" subtitle="Printed on every invoice and statement so customers know where to pay." back={{ href: "/settings", label: "Settings" }} />

@@ -4,11 +4,12 @@ import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { forgetCompany, forgetUser, requireAdmin } from "@/lib/auth";
 import { f, fail, formObject, zodFail, type ActionState } from "@/lib/action";
 import { CURRENCIES } from "@/lib/format";
 
 function refresh() {
+  forgetCompany();
   revalidatePath("/", "layout");
 }
 
@@ -125,6 +126,7 @@ export async function setUserActive(id: string, active: boolean): Promise<Action
   if (target.id === me.id) return fail("You cannot deactivate your own account.");
   if (target.role === "OWNER") return fail("The owner account cannot be deactivated.");
   await db.user.update({ where: { id }, data: { active } });
+  forgetUser(id);
   revalidatePath("/settings/team");
   return { ok: true };
 }
@@ -135,6 +137,7 @@ export async function setUserRole(id: string, role: "ADMIN" | "STAFF"): Promise<
   if (!target) return fail("This user no longer exists.");
   if (target.role === "OWNER" || target.id === me.id) return fail("This role cannot be changed.");
   await db.user.update({ where: { id }, data: { role } });
+  forgetUser(id);
   revalidatePath("/settings/team");
   return { ok: true };
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
+import { getContactNames } from "@/lib/lookups";
 import { requireCompany } from "@/lib/auth";
 import { daysBetween, isoDate, money, num, round2, todayISO } from "@/lib/format";
 import { PrintTitle, ReportHeader, Table, td, tdr } from "./report";
@@ -15,9 +16,15 @@ export async function AgingReport({ side }: { side: "receivables" | "payables" }
   const today = todayISO();
   const isRec = side === "receivables";
 
+  const [names, docs, bills] = await Promise.all([
+    getContactNames(),
+    isRec ? db.document.findMany({ where: { kind: "INVOICE", status: "SENT" }, select: { customerId: true, dueDate: true, total: true, amountPaid: true } }) : [],
+    isRec ? [] : db.bill.findMany({ where: { status: "OPEN" }, select: { subcontractorId: true, dueDate: true, total: true, amountPaid: true } }),
+  ]);
+  const contact = (id: string) => ({ id, name: names.get(id) ?? "—" });
   const items = isRec
-    ? (await db.document.findMany({ where: { kind: "INVOICE", status: "SENT" }, include: { customer: { select: { id: true, name: true } } } })).map((d) => ({ contact: d.customer, due: isoDate(d.dueDate), balance: round2(num(d.total) - num(d.amountPaid)) }))
-    : (await db.bill.findMany({ where: { status: "OPEN" }, include: { subcontractor: { select: { id: true, name: true } } } })).map((b) => ({ contact: b.subcontractor, due: isoDate(b.dueDate), balance: round2(num(b.total) - num(b.amountPaid)) }));
+    ? docs.map((d) => ({ contact: contact(d.customerId), due: isoDate(d.dueDate), balance: round2(num(d.total) - num(d.amountPaid)) }))
+    : bills.map((b) => ({ contact: contact(b.subcontractorId), due: isoDate(b.dueDate), balance: round2(num(b.total) - num(b.amountPaid)) }));
 
   const byContact = new Map<string, { id: string; name: string; buckets: number[]; total: number }>();
   const totals = [0, 0, 0, 0, 0];

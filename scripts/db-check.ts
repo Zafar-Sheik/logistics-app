@@ -34,6 +34,18 @@ async function main() {
     console.log(`✔ Connected in ${Date.now() - started} ms`);
     const [v] = await conn.query("SELECT VERSION() AS v");
     console.log(`  Server: ${v.v}`);
+    const trips: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const t = performance.now();
+      await conn.query("SELECT 1");
+      trips.push(performance.now() - t);
+    }
+    const rtt = Math.round(trips.sort((a, b) => a - b)[2]);
+    console.log(`  Round trip: ${rtt} ms per query`);
+    if (rtt > 120) {
+      console.log(`  Note: each page needs about one round trip, so pages will take roughly ${rtt + 50}–${rtt * 2 + 50} ms.`);
+      console.log("        For faster pages, create your TiDB cluster in the region closest to you.");
+    }
     const tables: { t: string }[] = await conn.query("SELECT table_name AS t FROM information_schema.tables WHERE table_schema = DATABASE()");
     const names = tables.map((r) => r.t);
     const needed = ["User", "Company", "Contact", "Load", "Document", "DocumentLine", "Bill", "Payment", "Expense", "Attachment"];

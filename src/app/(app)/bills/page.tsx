@@ -7,7 +7,8 @@ import { Badge, Card, EmptyState, FilterTabs, LinkButton, PageHeader, Pagination
 import { billStatus } from "@/lib/domain";
 import { fmtDate, money, num, parseDate, round2, todayISO } from "@/lib/format";
 import { linker, one, PAGE_SIZE, pageOf, type SearchParams } from "@/lib/params";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
+import { likeTerm } from "@/lib/lookups";
 
 export const metadata: Metadata = { title: "Subcontractor bills" };
 
@@ -35,14 +36,30 @@ export default async function BillsPage({ searchParams }: { searchParams: Search
   const search: Prisma.BillWhereInput = q ? { OR: [{ number: { contains: q } }, { subcontractor: { name: { contains: q } } }, { load: { number: { contains: q } } }] } : {};
   const where = { AND: [filters[filter] ?? {}, search] };
 
+  // The page of rows is one joined query (subcontractor name, load number and
+  // whether the customer has paid), so the list costs a single round trip.
+  const customerPaid = Prisma.sql`EXISTS (SELECT 1 FROM DocumentLine dl JOIN Document d ON d.id = dl.documentId WHERE dl.loadId = b.loadId AND d.kind = 'INVOICE' AND d.status = 'PAID')`;
+  const sqlFilters: Record<string, Prisma.Sql> = {
+    all: Prisma.sql`TRUE`,
+    open: Prisma.sql`b.status = 'OPEN'`,
+    ready: Prisma.sql`b.status = 'OPEN' AND ${customerPaid}`,
+    overdue: Prisma.sql`b.status = 'OPEN' AND b.dueDate < ${parseDate(today)}`,
+    paid: Prisma.sql`b.status = 'PAID'`,
+    void: Prisma.sql`b.status = 'VOID'`,
+  };
+  const like = likeTerm(q);
+  const sqlSearch = q ? Prisma.sql`(b.number LIKE ${like} OR c.name LIKE ${like} OR l.number LIKE ${like})` : Prisma.sql`TRUE`;
+  type BillRow = { id: string; number: string; status: string; dueDate: Date; total: unknown; amountPaid: unknown; subName: string; loadNumber: string | null; customerPaid: unknown };
+
   const [rows, total, anyAtAll, open, ready] = await Promise.all([
-    db.bill.findMany({
-      where,
-      include: { subcontractor: { select: { name: true } }, load: { select: { number: true, lines: { where: { document: { kind: "INVOICE", status: "PAID" } }, select: { id: true }, take: 1 } } } },
-      orderBy: [{ status: "asc" }, { dueDate: "asc" }],
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
+    db.$queryRaw<BillRow[]>`
+      SELECT b.id, b.number, b.status, b.dueDate, b.total, b.amountPaid, c.name AS subName, l.number AS loadNumber, ${customerPaid} AS customerPaid
+      FROM Bill b
+      JOIN Contact c ON c.id = b.subcontractorId
+      LEFT JOIN \`Load\` l ON l.id = b.loadId
+      WHERE (${sqlFilters[filter] ?? sqlFilters.all}) AND ${sqlSearch}
+      ORDER BY FIELD(b.status, 'OPEN', 'PAID', 'VOID'), b.dueDate ASC, b.id
+      LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE}`,
     db.bill.count({ where }),
     db.bill.count(),
     db.bill.aggregate({ where: { status: "OPEN" }, _sum: { total: true, amountPaid: true }, _count: true }),
@@ -84,13 +101,13 @@ export default async function BillsPage({ searchParams }: { searchParams: Search
             <RowList>
               {rows.map((b) => {
                 const s = billStatus(b, today);
-                const isReady = b.status === "OPEN" && (b.load?.lines.length ?? 0) > 0;
+                const isReady = b.status === "OPEN" && num(b.customerPaid) > 0;
                 return (
                   <Row
                     key={b.id}
                     href={`/bills/${b.id}`}
-                    title={b.subcontractor.name}
-                    subtitle={`${b.number}${b.load ? ` · ${b.load.number}` : ""} · due ${fmtDate(b.dueDate)}`}
+                    title={b.subName}
+                    subtitle={`${b.number}${b.loadNumber ? ` · ${b.loadNumber}` : ""} · due ${fmtDate(b.dueDate)}`}
                     meta={<><Badge tone={s.tone}>{s.label}</Badge>{isReady && <Badge tone="green">Customer paid</Badge>}</>}
                     right={money(b.total, cur)}
                     rightSub={b.status === "OPEN" && num(b.amountPaid) > 0 ? `${money(round2(num(b.total) - num(b.amountPaid)), cur)} left` : undefined}
