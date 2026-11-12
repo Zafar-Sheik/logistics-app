@@ -107,7 +107,7 @@ export async function changePasswordAction(_: ActionState, fd: FormData): Promis
   if (!parsed.success) return zodFail(parsed.error);
   const user = await db.user.findUniqueOrThrow({ where: { id: me.id } });
   if (!(await bcrypt.compare(parsed.data.current, user.passwordHash))) {
-    return fail("Please check the highlighted fields.", { current: "That is not your current password" });
+    return fail("Please fix the following:", { current: "That is not your current password" });
   }
   await db.user.update({ where: { id: me.id }, data: { passwordHash: await bcrypt.hash(parsed.data.next, 12) } });
   return { ok: true, message: "Password updated." };

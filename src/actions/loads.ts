@@ -35,9 +35,9 @@ export async function saveLoad(id: string | null, _: ActionState, fd: FormData):
   const d = parsed.data;
 
   const customer = await db.contact.findFirst({ where: { id: d.customerId, kind: "CUSTOMER" } });
-  if (!customer) return fail("Please check the highlighted fields.", { customerId: "Choose a customer" });
+  if (!customer) return fail("Please fix the following:", { customerId: "Choose a customer" });
   if (d.subcontractorId && !(await db.contact.findFirst({ where: { id: d.subcontractorId, kind: "SUBCONTRACTOR" } }))) {
-    return fail("Please check the highlighted fields.", { subcontractorId: "Choose a subcontractor" });
+    return fail("Please fix the following:", { subcontractorId: "Choose a subcontractor" });
   }
 
   const data = {

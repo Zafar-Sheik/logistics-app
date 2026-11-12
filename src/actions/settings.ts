@@ -111,7 +111,7 @@ export async function createUser(_: ActionState, fd: FormData): Promise<ActionSt
   if (!parsed.success) return zodFail(parsed.error);
   const d = parsed.data;
   if (await db.user.findUnique({ where: { email: d.email } })) {
-    return fail("Please check the highlighted fields.", { email: "Someone already uses this email" });
+    return fail("Please fix the following:", { email: "Someone already uses this email" });
   }
   await db.user.create({ data: { name: d.name, email: d.email, role: d.role, passwordHash: await bcrypt.hash(d.password, 12) } });
   revalidatePath("/settings/team");
@@ -142,7 +142,7 @@ export async function setUserRole(id: string, role: "ADMIN" | "STAFF"): Promise<
 export async function resetUserPassword(id: string, _: ActionState, fd: FormData): Promise<ActionState> {
   const me = await requireAdmin();
   const pw = String(fd.get("password") ?? "");
-  if (pw.length < 8) return fail("Please check the highlighted fields.", { password: "Use at least 8 characters" });
+  if (pw.length < 8) return fail("Please fix the following:", { password: "Use at least 8 characters" });
   const target = await db.user.findUnique({ where: { id } });
   if (!target) return fail("This user no longer exists.");
   if (target.role === "OWNER" && me.role !== "OWNER") return fail("Only the owner can change the owner's password.");

@@ -132,13 +132,13 @@ export async function saveBill(id: string | null, _: ActionState, fd: FormData):
   const d = parsed.data;
 
   const sub = await db.contact.findFirst({ where: { id: d.subcontractorId, kind: "SUBCONTRACTOR" } });
-  if (!sub) return fail("Please check the highlighted fields.", { subcontractorId: "Choose a subcontractor" });
+  if (!sub) return fail("Please fix the following:", { subcontractorId: "Choose a subcontractor" });
   if (d.loadId && !(await db.load.findUnique({ where: { id: d.loadId } }))) return fail("That load no longer exists.", { loadId: "Choose a load" });
 
   const duplicate = await db.bill.findFirst({
     where: { subcontractorId: d.subcontractorId, number: d.number, status: { not: "VOID" }, ...(id ? { id: { not: id } } : {}) },
   });
-  if (duplicate) return fail("Please check the highlighted fields.", { number: `You already captured invoice ${d.number} from ${sub.name}` });
+  if (duplicate) return fail("Please fix the following:", { number: `You already captured invoice ${d.number} from ${sub.name}` });
 
   const taxTotal = round2((d.subtotal * d.taxRate) / 100);
   const data = {

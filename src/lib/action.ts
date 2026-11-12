@@ -17,7 +17,7 @@ export function zodFail(err: z.ZodError): ActionState {
     const key = issue.path.join(".");
     if (key && !fieldErrors[key]) fieldErrors[key] = issue.message;
   }
-  return { ok: false, error: "Please check the highlighted fields.", fieldErrors };
+  return { ok: false, error: "Please fix the following:", fieldErrors };
 }
 
 /** Reads a FormData into a plain object (single values only). */
@@ -45,5 +45,6 @@ export const f = {
       .transform((v) => Math.round(v * 100) / 100),
   int: (label: string, min = 0, max = 100000) =>
     z.union([z.string(), z.number()]).transform((v) => Number(v)).refine((v) => Number.isInteger(v) && v >= min && v <= max, `${label} must be between ${min} and ${max}`),
-  checkbox: () => z.union([z.string(), z.undefined()]).transform((v) => v === "on" || v === "true"),
+  // An unticked checkbox is left out of the form data entirely, so "missing" means false.
+  checkbox: () => z.string().optional().transform((v) => v === "on" || v === "true"),
 };

@@ -48,7 +48,7 @@ export async function saveDocument(kind: Kind, id: string | null, payload: Docum
   const d = parsed.data;
 
   const customer = await db.contact.findFirst({ where: { id: d.customerId, kind: "CUSTOMER" } });
-  if (!customer) return fail("Please check the highlighted fields.", { customerId: "Choose a customer" });
+  if (!customer) return fail("Please fix the following:", { customerId: "Choose a customer" });
 
   // Only loads that belong to this customer may be linked.
   const loadIds = [...new Set(d.lines.map((l) => l.loadId).filter((x): x is string => !!x))];

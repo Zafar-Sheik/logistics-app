@@ -32,6 +32,18 @@ npm run dev
 
 Open http://localhost:3000. The first visit shows a one-time setup screen where you create the owner account and company. The app ships with **no sample data**.
 
+## Running it for real work
+
+`npm run dev` is for changing the code. It watches every file in the project and reloads the page when something changes, which can wipe what you are typing. To use the system day to day, run:
+
+```bash
+npm run prod
+```
+
+Then open http://localhost:3000. It is much faster and never reloads by itself.
+
+**Windows tip:** keep the project outside OneDrive-synced folders such as `Documents` (for example `C:\dev\logistics-app`). OneDrive and antivirus scans touch files constantly, which makes the dev server reload and slows everything down.
+
 ## Scripts
 
 | Command | What it does |
@@ -39,6 +51,7 @@ Open http://localhost:3000. The first visit shows a one-time setup screen where 
 | `npm run dev` | Start the development server |
 | `npm run build` | Generate the Prisma client and build for production |
 | `npm start` | Run the production build |
+| `npm run prod` | Build and start in one step (use this for day-to-day work on your own PC) |
 | `npm run db:deploy` | Apply database migrations (safe to run repeatedly) |
 | `npm run db:check` | Test the database connection and explain any problem |
 | `npm run lint` / `npm run typecheck` | Code checks |

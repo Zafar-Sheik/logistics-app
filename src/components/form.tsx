@@ -56,9 +56,20 @@ export function ActionForm({
   );
 }
 
+/** Field problems as a plain list, so they are clear even when the field is off-screen. */
+export function ErrorList({ fieldErrors }: { fieldErrors?: Record<string, string> }) {
+  const messages = [...new Set(Object.values(fieldErrors ?? {}))];
+  if (!messages.length) return null;
+  return (
+    <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
+      {messages.map((m) => <li key={m}>{m}</li>)}
+    </ul>
+  );
+}
+
 export function FormMessage() {
   const { state } = useFormState();
-  if (state?.error) return <Alert tone="red">{state.error}</Alert>;
+  if (state?.error) return <Alert tone="red">{state.error}<ErrorList fieldErrors={state.fieldErrors} /></Alert>;
   if (state?.ok && state.message) return <Alert tone="green">{state.message}</Alert>;
   return null;
 }
@@ -180,12 +191,13 @@ export function TextAreaField({ label, hint, optional, wrapClass, className, ...
 
 export function CheckboxField({ label, hint, name, defaultChecked, onChange }: { label: string; hint?: string; name: string; defaultChecked?: boolean; onChange?: (checked: boolean) => void }) {
   const id = useId();
+  const error = useFormState().state?.fieldErrors?.[name];
   return (
-    <label htmlFor={id} className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-3.5">
+    <label htmlFor={id} className={cx("flex cursor-pointer items-start gap-3 rounded-xl border bg-white p-3.5", error ? "border-red-500" : "border-slate-200")}>
       <input id={id} type="checkbox" name={name} defaultChecked={defaultChecked} onChange={(e) => onChange?.(e.target.checked)} className="mt-0.5 size-5 shrink-0 rounded border-slate-300 accent-brand-600" />
       <span>
         <span className="block text-sm font-medium text-slate-900">{label}</span>
-        {hint && <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>}
+        {error ? <span className="mt-0.5 block text-xs text-red-600">{error}</span> : hint && <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>}
       </span>
     </label>
   );

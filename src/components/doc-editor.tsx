@@ -7,7 +7,7 @@ import { saveDocument } from "@/actions/documents";
 import type { ActionState } from "@/lib/action";
 import { calcTotals } from "@/lib/domain";
 import { addDays, cx, money } from "@/lib/format";
-import { inputClass } from "./form";
+import { ErrorList, inputClass } from "./form";
 import { Sheet } from "./sheet";
 import { Alert, btn, Card, LinkButton } from "./ui";
 
@@ -34,6 +34,15 @@ export type DocEditorProps = {
     lines: { description: string; quantity: number; unitPrice: number; taxRate: number; loadId: string | null }[];
   };
 };
+
+/** Line errors arrive as "lines.2.description"; say which line they belong to. */
+function readable(errors?: Record<string, string>) {
+  if (!errors) return errors;
+  return Object.fromEntries(Object.entries(errors).map(([k, v]) => {
+    const m = k.match(/^lines\.(\d+)\./);
+    return [k, m ? `Line ${Number(m[1]) + 1}: ${v}` : v];
+  }));
+}
 
 let seq = 0;
 const key = () => `l${++seq}`;
@@ -120,7 +129,7 @@ export function DocEditor(p: DocEditorProps) {
   const label = "mb-1.5 block text-sm font-medium text-slate-700";
   return (
     <div className="space-y-4">
-      {state?.error && <Alert>{state.error}{err("lines") ? ` ${err("lines")}.` : ""}</Alert>}
+      {state?.error && <Alert>{state.error}<ErrorList fieldErrors={readable(state.fieldErrors)} /></Alert>}
 
       <Card className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5">
         <div className="sm:col-span-2">
