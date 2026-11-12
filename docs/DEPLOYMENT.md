@@ -33,6 +33,16 @@ npm run db:deploy
 
 This applies the SQL in `prisma/migrations`. It is safe to run again; it only applies what is new. Run it again after pulling an update that includes a new migration.
 
+### Alternative: paste a SQL script into TiDB
+
+If you would rather create the database by hand, open `database/create-database.sql`, paste it into the TiDB Cloud SQL Editor (or any MySQL client) and run it. It creates a database called `haulbook` and all ten tables, so your `DATABASE_URL` must end in `/haulbook`.
+
+If you use the script, skip `npm run db:deploy`. Instead run this once, so future updates know the tables already exist:
+
+```bash
+npx prisma migrate resolve --applied 20261112000000_init
+```
+
 ## 3. Deploy
 
 ### Vercel (recommended)
